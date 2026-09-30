@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure Telemetry — React preview</title>
+
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #131a22;
+    --panel-border: #22303c;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #4fd1c5;
+    --ok: #3fb950;
+    --bad: #f85149;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px 0; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .status-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .pill {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 999px;
+    padding: 6px 14px; font-size: 13px; display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 6px var(--bad); }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .tile { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px; padding: 14px 16px; }
+  .tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .tile .value { font-size: 26px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .unit { font-size: 14px; color: var(--muted); margin-left: 4px; }
+  .panels { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px; padding: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 12px 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  #chart-wrap { height: 320px; }
+  .feed { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .event { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; font-size: 13px; border-left: 3px solid var(--muted); }
+  .event.accepted { background: rgba(63, 185, 80, 0.08); border-left-color: var(--ok); }
+  .event.rejected { background: rgba(248, 81, 73, 0.08); border-left-color: var(--bad); }
+  .event .meta { color: var(--muted); font-size: 12px; }
+  .event .reason { color: var(--bad); font-size: 12px; margin-top: 2px; }
+  .empty { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+  .banner {
+    background: rgba(79,209,197,0.08); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 8px 14px; font-size: 12px; color: var(--accent); margin-bottom: 16px;
+  }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .panels { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="banner">React preview (React + Babel завантажені з CDN, без npm/Vite — на цій машині немає Node.js) · Dashboard.jsx незмінно піде у реальний проєкт</div>
+  <div id="root"></div>
+
+  <script type="text/babel" src="Dashboard.jsx"></script>
+  <script type="text/babel">
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<Dashboard />);
+  </script>
+</body>
+</html>

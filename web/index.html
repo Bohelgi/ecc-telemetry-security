@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure Telemetry — панель моніторингу</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #131a22;
+    --panel-border: #22303c;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #4fd1c5;
+    --ok: #3fb950;
+    --bad: #f85149;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px 0;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .status-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .pill {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 6px var(--bad); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .tile {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .tile .label {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .tile .value {
+    font-size: 26px;
+    font-weight: 600;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile .unit {
+    font-size: 14px;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+
+  .panels {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel h2 {
+    font-size: 14px;
+    margin: 0 0 12px 0;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  #chart-wrap { height: 320px; }
+
+  .feed {
+    max-height: 320px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .event {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    border-left: 3px solid var(--muted);
+  }
+  .event.accepted { background: rgba(63, 185, 80, 0.08); border-left-color: var(--ok); }
+  .event.rejected { background: rgba(248, 81, 73, 0.08); border-left-color: var(--bad); }
+  .event .meta { color: var(--muted); font-size: 12px; }
+  .event .reason { color: var(--bad); font-size: 12px; margin-top: 2px; }
+
+  .empty {
+    color: var(--muted);
+    font-size: 13px;
+    padding: 20px 0;
+    text-align: center;
+  }
+
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .panels { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <h1>Secure Telemetry — панель моніторингу</h1>
+  <div class="subtitle">ECDH + AES-256-GCM + ECDSA · локальний перегляд шлюзу (gateway_verifier)</div>
+
+  <div class="status-row">
+    <div class="pill"><span id="conn-dot" class="dot"></span> <span id="conn-text">З'єднання з шлюзом...</span></div>
+    <div class="pill">Підключені пристрої: <strong id="device-count">0</strong></div>
+    <div class="pill">Прийнято: <strong id="accepted-count" style="color:var(--ok)">0</strong></div>
+    <div class="pill">Відхилено: <strong id="rejected-count" style="color:var(--bad)">0</strong></div>
+  </div>
+
+  <div class="grid">
+    <div class="tile"><div class="label">Напруга</div><div class="value" id="tile-u">—<span class="unit">В</span></div></div>
+    <div class="tile"><div class="label">Струм</div><div class="value" id="tile-i">—<span class="unit">А</span></div></div>
+    <div class="tile"><div class="label">Потужність</div><div class="value" id="tile-p">—<span class="unit">Вт</span></div></div>
+    <div class="tile"><div class="label">Температура</div><div class="value" id="tile-t">—<span class="unit">°C</span></div></div>
+  </div>
+
+  <div class="panels">
+    <div class="panel">
+      <h2>Потужність у часі</h2>
+      <div id="chart-wrap"><canvas id="chart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Стрічка подій</h2>
+      <div class="feed" id="feed"><div class="empty">Очікування даних від пристрою...</div></div>
+    </div>
+  </div>
+
+<script>
+const chartCtx = document.getElementById('chart').getContext('2d');
+const chart = new Chart(chartCtx, {
+  type: 'line',
+  data: { labels: [], datasets: [{ label: 'Потужність (Вт)', data: [], borderColor: '#4fd1c5', backgroundColor: 'rgba(79,209,197,0.1)', tension: 0.25, fill: true, pointRadius: 0 }] },
+  options: {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { ticks: { color: '#8b98a5' }, grid: { color: '#22303c' } },
+      y: { ticks: { color: '#8b98a5' }, grid: { color: '#22303c' } }
+    },
+    plugins: { legend: { labels: { color: '#e6edf3' } } }
+  }
+});
+
+function fmtTime(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString('uk-UA');
+}
+
+async function poll() {
+  try {
+    const [statusRes, telemetryRes, eventsRes] = await Promise.all([
+      fetch('/api/status').then(r => r.json()),
+      fetch('/api/telemetry').then(r => r.json()),
+      fetch('/api/events').then(r => r.json()),
+    ]);
+
+    document.getElementById('conn-dot').className = 'dot ok';
+    document.getElementById('conn-text').textContent = 'Підключено до шлюзу';
+    document.getElementById('device-count').textContent = statusRes.connectedDevices.length;
+    document.getElementById('accepted-count').textContent = statusRes.totalAccepted;
+    document.getElementById('rejected-count').textContent = statusRes.totalRejected;
+
+    if (telemetryRes.length > 0) {
+      const last = telemetryRes[telemetryRes.length - 1];
+      document.getElementById('tile-u').innerHTML = last.U.toFixed(1) + '<span class="unit">В</span>';
+      document.getElementById('tile-i').innerHTML = last.I.toFixed(2) + '<span class="unit">А</span>';
+      document.getElementById('tile-p').innerHTML = last.P.toFixed(1) + '<span class="unit">Вт</span>';
+      document.getElementById('tile-t').innerHTML = last.T.toFixed(1) + '<span class="unit">°C</span>';
+
+      chart.data.labels = telemetryRes.map(p => fmtTime(p.t));
+      chart.data.datasets[0].data = telemetryRes.map(p => p.P);
+      chart.update('none');
+    }
+
+    const feed = document.getElementById('feed');
+    if (eventsRes.length === 0) {
+      feed.innerHTML = '<div class="empty">Очікування даних від пристрою...</div>';
+    } else {
+      feed.innerHTML = eventsRes.slice().reverse().map(e => {
+        const cls = e.status === 'accepted' ? 'accepted' : 'rejected';
+        const label = e.status === 'accepted' ? 'ПРИЙНЯТО' : 'ВІДХИЛЕНО';
+        const reason = e.status === 'rejected' && e.detail ? `<div class="reason">${e.detail}</div>` : '';
+        return `<div class="event ${cls}">
+                  <div>
+                    <strong>${label}</strong> #${e.seq} — ${e.device}
+                    ${reason}
+                  </div>
+                  <div class="meta">${e.t ? fmtTime(e.t) : ''}</div>
+                </div>`;
+      }).join('');
+    }
+  } catch (err) {
+    document.getElementById('conn-dot').className = 'dot bad';
+    document.getElementById('conn-text').textContent = 'Немає з\'єднання з шлюзом';
+  }
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

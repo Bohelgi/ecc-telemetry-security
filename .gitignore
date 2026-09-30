@@ -1,0 +1,29 @@
+build/
+out/
+.vs/
+*.log
+device_identity.hex
+trust_store.txt
+
+# Тимчасові lock-файли Microsoft Office (з'являються при відкритому .docx)
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
+# Типові IDE/build-артефакти, якщо колись згенеруються поза build/
+*.obj
+*.pdb
+*.ilk
+.vscode/
+.idea/
+CMakeUserPresets.json
+
+# Тимчасово виключено з пушу (диплом ще не в фінальному стані) -
+# лежать поверх, у C:\diploma\. Прибрати ці рядки, коли будете готові
+# знову включити їх у репозиторій.
+*.docx
+*.pdf
+DEPLOYMENT.md
+trust_store.example.txt
+Dockerfile
+.dockerignore
