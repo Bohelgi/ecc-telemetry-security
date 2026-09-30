@@ -70,6 +70,9 @@ void recordAccepted(DashboardState& dashboard, const std::string& deviceId, uint
 void runHttpServer(uint16_t httpPort, GatewayAgent& gateway, std::mutex& gatewayMutex, DashboardState& dashboard) {
     httplib::Server server;
     server.set_mount_point("/", DASHBOARD_WEB_DIR);
+    // Дашборд команди звертається з іншого походження (localhost:5173 /
+    // 77.47.192.6:5173) - без цього заголовка браузер блокує fetch() до /api/*.
+    server.set_default_headers({{"Access-Control-Allow-Origin", "*"}});
 
     server.Get("/api/status", [&](const httplib::Request&, httplib::Response& res) {
         res.set_content(dashboard.statusJson(), "application/json");
