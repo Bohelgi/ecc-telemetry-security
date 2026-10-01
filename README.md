@@ -212,12 +212,12 @@ ECC над RSA-3072 на операціях підпису/перевірки є
 | Файл | Шар | Призначення |
 |---|---|---|
 | `include/telemetry/support.hpp` + `src/support.cpp` | 0 — базовий | Тип `Bytes`, конвертація в/з hex (`toHex`/`fromHex`), бінарна серіалізація (`wire::Writer`/`Reader`, розділ 3.6), генератор криптографічно стійких випадкових чисел (`RandomSource`, CTR_DRBG), тип виключення для сигналізації відхиленої атаки (`SecurityException`). |
-| `include/telemetry/console_colors.hpp` | 0 — допоміжний | ANSI-коди кольорового консольного виводу та вмикання підтримки VT100/UTF-8 у консолі Windows; використовується застосунками, логіки протоколу не стосується. |
+| `include/telemetry/console_colors.hpp` | 0 — допоміжний | ANSI-коди кольорового консольного виводу та вмикання підтримки VT100/UTF-8 у консолі Windows; використовується застосунками (розділ 8), логіки протоколу не стосується. |
 | `include/telemetry/crypto_primitives.hpp` + `.cpp` | 1 — криптографічні примітиви | `EccIdentity` — довгострокова ECDSA-ідентичність (3.1); `EphemeralKeyPair` — ефемерна пара ECDH і виведення сесійного ключа (3.2); `AesGcmCipher` — шифрування/розшифрування AES-256-GCM (3.3). |
 | `include/telemetry/protocol_messages.hpp` + `.cpp` | 2 — формати повідомлень | `TelemetryPacket` — серіалізовані сирі показання; `HelloMessage` — повідомлення хендшейку; `TelemetryEnvelope` — підписаний зашифрований конверт телеметрії; допоміжні `makeTelemetryAad`, `handshakeTranscript`. |
 | `include/telemetry/protocol_agents.hpp` + `.cpp` | 3 — протокол | `DeviceAgent` — логіка сторони пристрою (`buildHello`, `completeHandshake`, `protect`); `GatewayAgent` — логіка сторони шлюзу (`acceptHello`, `unprotect`, реєстр довірених ключів і активних сесій). Ключовий файл для розуміння протоколу в цілому. |
 | `include/telemetry/tcp_socket.hpp` + `.cpp` | транспорт | Кросплатформна (Winsock2/POSIX) TCP-передача вже сформованих конвертів із довжиннопрефіксним фреймуванням; не бере участі в криптографічних перетвореннях. |
-| `apps/device_simulator.cpp` | застосунок | Емуляція ESP32-вузла: генерує правдоподібні показання, захищає їх через `DeviceAgent`, надсилає шлюзу (TCP або HTTP). Містить керований прапорцем `--attack` блок демонстрації атак. |
+| `apps/device_simulator.cpp` | застосунок | Емуляція ESP32-вузла: генерує правдоподібні показання, захищає їх через `DeviceAgent`, надсилає шлюзу (TCP або HTTP). Містить керований прапорцем `--attack` блок демонстрації атак (розділ 8.2). |
 | `apps/gateway_verifier.cpp` | застосунок | Емуляція бекенду: приймає, перевіряє й розшифровує телеметрію через `GatewayAgent`; надає HTTP API та вебдашборд. |
 | `apps/dashboard_state.hpp` + `.cpp` | застосунок (допоміжний) | Потокобезпечне сховище останніх прийнятих/відхилених вимірів для вебдашборду; до криптографічного протоколу не належить. |
 | `apps/security_demo.cpp` | застосунок | Інтерактивна консольна демонстрація 9 сценаріїв (розділ 6.2) для захисту роботи. |
@@ -287,4 +287,59 @@ ECC над RSA-3072 на операціях підпису/перевірки є
 
 ```powershell
 ./build/security_demo.exe
+```
+
+# 7. Збірка проєкту
+
+Бібліотека шифрування — [Mbed TLS](https://github.com/Mbed-TLS/mbedtls)
+v2.28.9 LTS (та сама, що входить в ESP-IDF/Arduino-ESP32), залучається
+автоматично через CMake `FetchContent` при першій конфігурації.
+
+```powershell
+# з "Developer PowerShell for VS" (щоб мати cl.exe/cmake.exe в PATH)
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+cmake --build build --config Release
+```
+
+Артефакти: `build/Release/device_simulator.exe`, `gateway_verifier.exe`,
+`crypto_tests.exe`, `security_demo.exe`.
+
+# 8. Демонстраційні сценарії
+
+### 8.1 Базовий запуск (два застосунки по TCP)
+
+```powershell
+./build/Release/crypto_tests.exe
+
+./build/Release/device_simulator.exe --id esp32-node-01 --export-identity trust_store.txt
+./build/Release/gateway_verifier.exe --port 9443 --trust-store trust_store.txt
+./build/Release/device_simulator.exe --id esp32-node-01 --port 9443 --interval 2000
+```
+
+Вебдашборд доступний на `http://localhost:<http-port>` одразу після
+старту `gateway_verifier` (типово `--http-port 8090`): `/` — версія на
+JS/Chart.js, `/react-preview.html` — попередній перегляд React-версії
+(`web/Dashboard.jsx`).
+
+### 8.2 Демонстрація відхилення атаки
+
+`device_simulator` приймає прапорець `--attack none|tamper|replay|both`
+(типово `none`) — вмикає сценарії атак 2 і 3 (розділ 2) без перезбирання:
+
+```powershell
+./build/Release/device_simulator.exe --id esp32-node-01 --port 9443 --attack both
+```
+
+У виводі `gateway_verifier` і на вебдашборді позначені пакети
+відображаються як `REJECTED` із точною причиною відхилення.
+
+### 8.3 Транспорт: TCP або HTTP
+
+`--transport tcp|http` (типово `tcp`); обидва варіанти передають
+ідентичні за вмістом серіалізовані повідомлення (`HelloMessage`,
+`TelemetryEnvelope`) через `GatewayAgent::unprotect()`, різниться лише
+спосіб доставки:
+
+```powershell
+./build/Release/device_simulator.exe --id esp32-node-01 --port 8090 --transport http
 ```
