@@ -260,6 +260,11 @@ int main(int argc, char** argv) {
                       << "V I=" << packet.currentA << "A P=" << packet.powerW << "W T=" << packet.temperatureC
                       << "C\n"
                       << "         nonce=" << toHex(msg.nonce) << " tag=" << toHex(msg.tag) << "\n"
+                      // Демонстрація атаки 1 (пасивне прослуховування, розділ 2 README):
+                      // саме це - і тільки це - бачить пасивний спостерігач мережі.
+                      // Значення U/I/P/T вище друкуються лише локально, для дебагу,
+                      // і ніколи не передаються в такому вигляді.
+                      << "         ciphertext=" << toHex(msg.ciphertext) << "\n"
                       << "         ECDSA signature (" << msg.signature.size() << " bytes)=" << toHex(msg.signature)
                       << "\n";
 
