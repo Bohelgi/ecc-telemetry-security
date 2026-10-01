@@ -353,6 +353,40 @@ JS/Chart.js, `/react-preview.html` — попередній перегляд Rea
 `TelemetryEnvelope`) через `GatewayAgent::unprotect()`, різниться лише
 спосіб доставки:
 
+### 8.4 Демонстрація на розгорнутому сервері (додатково)
+
+Розділи 8.1-8.3 — основний, самодостатній спосіб перевірки: локальний
+`gateway_verifier` + `device_simulator`, нічого стороннього не потребує.
+Додатково той самий бекенд розгорнутий і в спільній інфраструктурі
+команди Smart Energy Lab (Docker-образ `olehmedvediev/ecc-telemetry-security`,
+інтегрований у `rozumnaEnergia` через `docker-compose.yaml`), і всі ті самі
+сценарії можна відтворити наживо проти нього — з тим самим `.exe`, без
+перезбирання, просто вказавши `--host`:
+
+- Вебдашборд: **http://77.47.192.6:5173/telemetry-security-medvediev**
+- Пристрій `esp32-medvediev-live` вже зареєстрований у довіреному списку
+  шлюзу на сервері.
+
+```powershell
+# штатна робота
+./build/Release/device_simulator.exe --id esp32-medvediev-live --host 77.47.192.6 --port 6020 --transport http --interval 2000
+
+# атаки, по одній
+./build/Release/device_simulator.exe --id esp32-medvediev-live --host 77.47.192.6 --port 6020 --transport http --attack tamper
+./build/Release/device_simulator.exe --id esp32-medvediev-live --host 77.47.192.6 --port 6020 --transport http --attack replay
+./build/Release/device_simulator.exe --id esp32-medvediev-live --host 77.47.192.6 --port 6020 --transport http --attack forge
+./build/Release/device_simulator.exe --id esp32-medvediev-live --host 77.47.192.6 --port 6020 --transport http --attack unknown
+
+# обидві одночасно (tamper + replay)
+./build/Release/device_simulator.exe --id esp32-medvediev-live --host 77.47.192.6 --port 6020 --transport http --attack both
+```
+
+Це той самий протокол і той самий код, що й у 8.1-8.3 — тож результат
+(`ПРИЙНЯТО`/`ВІДХИЛЕНО` на дашборді, ідентичні причини відхилення)
+підтверджує не лише коректність криптографії саму собою, а й те, що вона
+працює без змін у реальному розгорнутому середовищі, а не лише
+"на localhost".
+
 ```powershell
 ./build/Release/device_simulator.exe --id esp32-node-01 --port 8090 --transport http
 ```
