@@ -46,8 +46,10 @@ Args parseArgs(int argc, char** argv) {
         else if (arg == "--attack") a.attack = next("--attack");
         else throw std::runtime_error("unknown argument: " + arg);
     }
-    if (a.attack != "none" && a.attack != "tamper" && a.attack != "replay" && a.attack != "both") {
-        throw std::runtime_error("unknown --attack '" + a.attack + "' (expected none|tamper|replay|both)");
+    if (a.attack != "none" && a.attack != "tamper" && a.attack != "replay" && a.attack != "both" &&
+        a.attack != "forge" && a.attack != "unknown") {
+        throw std::runtime_error("unknown --attack '" + a.attack +
+                                  "' (expected none|tamper|replay|both|forge|unknown)");
     }
     return a;
 }
@@ -150,7 +152,14 @@ int main(int argc, char** argv) {
     ansi::enable();
     try {
         Args args = parseArgs(argc, argv);
-        EccIdentity identity = EccIdentity::loadOrCreate(args.keyFile);
+        bool attackUnknown = (args.attack == "unknown");
+        // Для демонстрації "невідомий пристрій" беремо свіжу, ніде не зареєстровану
+        // ідентичність і інший deviceId - справжній ключ пристрою (args.keyFile)
+        // тут свідомо не чіпаємо.
+        EccIdentity identity = attackUnknown ? EccIdentity() : EccIdentity::loadOrCreate(args.keyFile);
+        if (attackUnknown) {
+            args.deviceId += "-unregistered-demo";
+        }
 
         if (!args.exportIdentityTo.empty()) {
             std::ofstream out(args.exportIdentityTo, std::ios::app);
@@ -177,27 +186,54 @@ int main(int argc, char** argv) {
             throw std::runtime_error("unknown --transport '" + args.transport + "' (expected 'tcp' or 'http')");
         }
 
+        if (args.attack != "none") {
+            std::cout << ansi::yellow << "[device] ATTACK DEMO active: --attack " << args.attack << ansi::reset
+                      << "\n\n";
+        }
+
         HelloMessage myHello = agent.buildHello();
         std::cout << "[device] -> Hello, ephemeral ECDH public key: " << toHex(myHello.ephemeralPublicKey) << "\n";
+
+        if (attackUnknown) {
+            // Хендшейк для незареєстрованого пристрою шлюз відхиляє ще ДО обміну
+            // ефемерними ключами (GatewayAgent::acceptHello -> isTrusted()) - сесія
+            // взагалі не встановлюється, тож надсилати телеметрію нема чим.
+            try {
+                transport->exchangeHello(myHello);
+                std::cout << ansi::red
+                          << "[device] (demo) WARNING: gateway accepted an unregistered device - this should NOT "
+                             "happen!"
+                          << ansi::reset << "\n";
+                return 1;
+            } catch (const std::exception& e) {
+                std::cout << ansi::green << "[device] (demo) gateway correctly rejected unregistered device '"
+                          << args.deviceId << "': " << e.what() << ansi::reset << "\n";
+                return 0;
+            }
+        }
+
         HelloMessage gatewayHello = transport->exchangeHello(myHello);
         std::cout << "[device] <- Hello from gateway, ephemeral public key: "
                   << toHex(gatewayHello.ephemeralPublicKey) << "\n";
         agent.completeHandshake(gatewayHello);
         std::cout << "[device] AES-256-GCM session key agreed via ECDH.\n\n";
 
-        // ATTACK DEMO SWITCH - керується прапорцем --attack none|tamper|replay|both,
-        // не потребує перезбирання. Підпис ECDSA охоплює й шифротекст, тож підміна
-        // (tamper) ламає саме перевірку підпису (gateway.unprotect() кине
-        // SecurityException "ECDSA signature verification failed") ще до того, як
-        // справа дійде до перевірки AES-GCM тегу - шлюз перевіряє підпис першим.
-        // Повторне відтворення (replay) шлюз відхилить за номером послідовності,
-        // що не зростає.
+        // ATTACK DEMO SWITCH - керується прапорцем --attack
+        // none|tamper|replay|both|forge|unknown, не потребує перезбирання.
+        // tamper: підпис ECDSA охоплює й шифротекст, тож підміна ламає саме
+        //   перевірку підпису (gateway.unprotect() кине SecurityException "ECDSA
+        //   signature verification failed") ще до того, як справа дійде до
+        //   перевірки AES-GCM тегу - шлюз перевіряє підпис першим.
+        // replay: шлюз відхилить повторний пакет за номером послідовності, що не
+        //   зростає.
+        // forge: конверт підписується СТОРОННІМ ключем (не тим, що зареєстрований
+        //   за цим deviceId) - шлюз перевіряє підпис саме проти зареєстрованого
+        //   ключа, тож підпис криптографічно коректний, але належить не тому.
+        // unknown: окрема гілка вище - відхилення ще на хендшейку.
         bool doTamper = (args.attack == "tamper" || args.attack == "both");
         bool doReplay = (args.attack == "replay" || args.attack == "both");
-        if (args.attack != "none") {
-            std::cout << ansi::yellow << "[device] ATTACK DEMO active: --attack " << args.attack << ansi::reset
-                      << "\n\n";
-        }
+        bool doForge = (args.attack == "forge");
+        EccIdentity attackerIdentity;  // свіжа, стороння пара ключів - для forge
 
         SensorSimulator sensor;
         for (int i = 0; args.count == 0 || i < args.count; ++i) {
@@ -208,6 +244,11 @@ int main(int argc, char** argv) {
                 msg.ciphertext[0] ^= 0xFF;
                 std::cout << ansi::yellow << "[device] (demo) tampering with ciphertext of #" << msg.sequenceNumber
                            << ansi::reset << "\n";
+            }
+            if (doForge && msg.sequenceNumber % 3 == 0) {
+                msg.signature = attackerIdentity.sign(msg.signedTranscript());
+                std::cout << ansi::yellow << "[device] (demo) forging signature of #" << msg.sequenceNumber
+                          << " with a foreign key" << ansi::reset << "\n";
             }
             if (doReplay && msg.sequenceNumber == 4) {
                 std::cout << ansi::yellow << "[device] (demo) replaying #" << msg.sequenceNumber << " a second time"

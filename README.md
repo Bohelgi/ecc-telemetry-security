@@ -323,15 +323,28 @@ JS/Chart.js, `/react-preview.html` — попередній перегляд Rea
 
 ### 8.2 Демонстрація відхилення атаки
 
-`device_simulator` приймає прапорець `--attack none|tamper|replay|both`
-(типово `none`) — вмикає сценарії атак 2 і 3 (розділ 2) без перезбирання:
+`device_simulator` приймає прапорець
+`--attack none|tamper|replay|both|forge|unknown` (типово `none`) — вмикає
+відповідний сценарій атаки без перезбирання:
+
+| Значення | Яку атаку з розділу 2 демонструє | Де відхиляється |
+|---|---|---|
+| `tamper` | 2 — підміна шифротексту в польоті | Перевірка ECDSA-підпису (`unprotect`) |
+| `replay` | 3 — повторне відтворення | Перевірка номера послідовності (`unprotect`) |
+| `both` | 2 і 3 одночасно | — |
+| `forge` | 4 — підробка відправника (підпис чужим ключем) | Перевірка ECDSA-підпису проти зареєстрованого ключа (`unprotect`) |
+| `unknown` | 5 — підключення незареєстрованого пристрою | Перевірка білого списку ще на хендшейку (`acceptHello`) |
 
 ```powershell
 ./build/Release/device_simulator.exe --id esp32-node-01 --port 9443 --attack both
+./build/Release/device_simulator.exe --id esp32-node-01 --port 9443 --attack forge
+./build/Release/device_simulator.exe --id esp32-node-01 --port 9443 --attack unknown
 ```
 
-У виводі `gateway_verifier` і на вебдашборді позначені пакети
-відображаються як `REJECTED` із точною причиною відхилення.
+Для `forge`/`tamper`/`replay`/`both` шлюз і дашборд позначають окремі
+пакети як `REJECTED` із точною причиною, решта потоку триває штатно. Для
+`unknown` відхиляється вже сам хендшейк — сесія не встановлюється
+взагалі, програма завершується одразу після підтвердження відхилення.
 
 ### 8.3 Транспорт: TCP або HTTP
 
