@@ -153,9 +153,6 @@ int main(int argc, char** argv) {
     try {
         Args args = parseArgs(argc, argv);
         bool attackUnknown = (args.attack == "unknown");
-        // Для демонстрації "невідомий пристрій" беремо свіжу, ніде не зареєстровану
-        // ідентичність і інший deviceId - справжній ключ пристрою (args.keyFile)
-        // тут свідомо не чіпаємо.
         EccIdentity identity = attackUnknown ? EccIdentity() : EccIdentity::loadOrCreate(args.keyFile);
         if (attackUnknown) {
             args.deviceId += "-unregistered-demo";
@@ -195,9 +192,6 @@ int main(int argc, char** argv) {
         std::cout << "[device] -> Hello, ephemeral ECDH public key: " << toHex(myHello.ephemeralPublicKey) << "\n";
 
         if (attackUnknown) {
-            // Хендшейк для незареєстрованого пристрою шлюз відхиляє ще ДО обміну
-            // ефемерними ключами (GatewayAgent::acceptHello -> isTrusted()) - сесія
-            // взагалі не встановлюється, тож надсилати телеметрію нема чим.
             try {
                 transport->exchangeHello(myHello);
                 std::cout << ansi::red
@@ -218,22 +212,10 @@ int main(int argc, char** argv) {
         agent.completeHandshake(gatewayHello);
         std::cout << "[device] AES-256-GCM session key agreed via ECDH.\n\n";
 
-        // ATTACK DEMO SWITCH - керується прапорцем --attack
-        // none|tamper|replay|both|forge|unknown, не потребує перезбирання.
-        // tamper: підпис ECDSA охоплює й шифротекст, тож підміна ламає саме
-        //   перевірку підпису (gateway.unprotect() кине SecurityException "ECDSA
-        //   signature verification failed") ще до того, як справа дійде до
-        //   перевірки AES-GCM тегу - шлюз перевіряє підпис першим.
-        // replay: шлюз відхилить повторний пакет за номером послідовності, що не
-        //   зростає.
-        // forge: конверт підписується СТОРОННІМ ключем (не тим, що зареєстрований
-        //   за цим deviceId) - шлюз перевіряє підпис саме проти зареєстрованого
-        //   ключа, тож підпис криптографічно коректний, але належить не тому.
-        // unknown: окрема гілка вище - відхилення ще на хендшейку.
         bool doTamper = (args.attack == "tamper" || args.attack == "both");
         bool doReplay = (args.attack == "replay" || args.attack == "both");
         bool doForge = (args.attack == "forge");
-        EccIdentity attackerIdentity;  // свіжа, стороння пара ключів - для forge
+        EccIdentity attackerIdentity;
 
         SensorSimulator sensor;
         for (int i = 0; args.count == 0 || i < args.count; ++i) {
@@ -260,10 +242,6 @@ int main(int argc, char** argv) {
                       << "V I=" << packet.currentA << "A P=" << packet.powerW << "W T=" << packet.temperatureC
                       << "C\n"
                       << "         nonce=" << toHex(msg.nonce) << " tag=" << toHex(msg.tag) << "\n"
-                      // Демонстрація атаки 1 (пасивне прослуховування, розділ 2 README):
-                      // саме це - і тільки це - бачить пасивний спостерігач мережі.
-                      // Значення U/I/P/T вище друкуються лише локально, для дебагу,
-                      // і ніколи не передаються в такому вигляді.
                       << "         ciphertext=" << toHex(msg.ciphertext) << "\n"
                       << "         ECDSA signature (" << msg.signature.size() << " bytes)=" << toHex(msg.signature)
                       << "\n";

@@ -68,8 +68,9 @@
 а підпис обчислюється над `TelemetryEnvelope::signedTranscript()`, куди
 входить і шифротекст. Тому підміна ciphertext ламає підпис, і виняток
 `SecurityException` летить із повідомленням "ECDSA signature verification
-failed", а не "AES-GCM tag mismatch" (це нетривіальний, емпірично
-перевірений факт - див. коментар `ATTACK DEMO SWITCH` у `device_simulator.cpp`).
+failed", а не "AES-GCM tag mismatch" - це нетривіальний, емпірично
+перевірений факт (перевірка підпису в `GatewayAgent::unprotect()` йде
+першою).
 
 **Чому важливо:** класична модель загрози "людина посередині" для
 телеметрії - зловмисник підмінює показання лічильника без доступу до
