@@ -29,6 +29,7 @@ public:
     void recordConnectionClosed(const std::string& deviceId);
     void recordAccepted(const TelemetryPoint& point);
     void recordRejected(const std::string& deviceId, uint32_t sequenceNumber, const std::string& reason);
+    void reset();
 
     std::string statusJson() const;
     std::string telemetryJson() const;

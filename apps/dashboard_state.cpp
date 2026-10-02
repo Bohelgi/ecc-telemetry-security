@@ -57,6 +57,15 @@ void DashboardState::recordRejected(const std::string& deviceId, uint32_t sequen
     ++totalRejected_;
 }
 
+void DashboardState::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    telemetry_.clear();
+    events_.clear();
+    connectedDevices_.clear();
+    totalAccepted_ = 0;
+    totalRejected_ = 0;
+}
+
 std::string DashboardState::statusJson() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ostringstream os;
