@@ -1,5 +1,6 @@
 #include "telemetry/console_colors.hpp"
 #include "telemetry/protocol_agents.hpp"
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <sstream>
@@ -50,9 +51,25 @@ std::string fmtF(float v) {
     return os.str();
 }
 
+std::string hexMarked(const Bytes& shown, const Bytes& other) {
+    std::string out;
+    for (size_t i = 0; i < shown.size(); ++i) {
+        std::string h = toHex({shown[i]});
+        if (i < other.size() && shown[i] != other[i]) out += std::string(ansi::red) + ansi::bold + h + ansi::reset;
+        else out += h;
+        out += ' ';
+    }
+    return out;
+}
+
+std::string verdict(bool ok) {
+    return std::string(ok ? ansi::green : ansi::red) + ansi::bold + (ok ? "ВІРНИЙ" : "НЕВІРНИЙ") + ansi::reset;
+}
+
 struct HandshakedPair {
     DeviceAgent device;
     GatewayAgent gateway;
+    Bytes pubKey;
 };
 
 HandshakedPair freshHandshakedPair(const std::string& deviceId = "esp32-node-01") {
@@ -67,7 +84,7 @@ HandshakedPair freshHandshakedPair(const std::string& deviceId = "esp32-node-01"
     HelloMessage gatewayHello = gateway.acceptHello(deviceHello);
     device.completeHandshake(gatewayHello);
 
-    return HandshakedPair{std::move(device), std::move(gateway)};
+    return HandshakedPair{std::move(device), std::move(gateway), pubKey};
 }
 
 TelemetryPacket samplePacket() {
@@ -160,29 +177,51 @@ void scenarioForwardSecrecy() {
 
     step(5, 5, "Порівнюємо саме два сесійні AES-ключі (хендшейк #1 проти хендшейку #2) побайтово.");
     bool different = !std::equal(key1.begin(), key1.end(), key2.begin());
+    size_t differingBytes = 0;
+    for (size_t i = 0; i < key1.size(); ++i) differingBytes += (key1[i] != key2[i]);
+    info("ключі відрізняються у " + hl(std::to_string(differingBytes)) + " із " + std::to_string(key1.size()) + " байтів");
     outcome(different, "сесійні ключі різні -> компрометація ключа сесії #1 не розкриває дані сесії #2 (forward secrecy)");
 }
 
 void scenarioTamperRejected() {
     title("3. Підміна шифротексту в польоті (MITM)");
     auto pair = freshHandshakedPair();
-    TelemetryEnvelope msg = pair.device.protect(samplePacket());
-    step(1, 4, "Пристрій надіслав справжній, підписаний конверт.");
-    info("ciphertext[0..3] до підміни: " + toHex(Bytes(msg.ciphertext.begin(), msg.ciphertext.begin() + 4)));
+    TelemetryPacket p = samplePacket();
+    TelemetryEnvelope original = pair.device.protect(p);
+    TelemetryEnvelope msg = original;
+
+    step(1, 6, "Пристрій надіслав справжній, підписаний конверт із напругою " + hl(fmtF(p.voltageV) + " В") + ".");
+    info("шифротекст (" + std::to_string(original.ciphertext.size()) + " байт): " +
+         hexMarked(original.ciphertext, original.ciphertext));
     info("підпис обчислено над усім конвертом, включно з цим шифротекстом: " + shortHex(msg.signature));
 
-    step(2, 4, "Зловмисник перехоплює пакет 'у польоті' й змінює лише перший байт шифротексту.");
-    uint8_t before = msg.ciphertext[0];
-    msg.ciphertext[0] ^= 0xFF;
-    info("ciphertext[0]: " + hl("0x" + toHex({before})) + " -> " + hl("0x" + toHex({msg.ciphertext[0]})) +
-         " (підпис лишили як є)");
+    constexpr size_t kIdx = 11;
+    constexpr uint8_t kMask = 0x80;
+    step(2, 6, "Зловмисник перехоплює пакет 'у польоті' й змінює один біт у байті №" + std::to_string(kIdx) +
+                   " шифротексту (там лежить знак напруги).");
+    msg.ciphertext[kIdx] ^= kMask;
+    info("було:  " + hexMarked(original.ciphertext, msg.ciphertext));
+    info("стало: " + hexMarked(msg.ciphertext, original.ciphertext));
+    info("змінений байт виділено червоним, підпис лишили як є");
 
-    step(3, 4, "Підмінений пакет надсилається шлюзу під виглядом справжнього.");
+    step(3, 6, "Чого він домагається: у режимі лічильника (AES-GCM) зміна біта шифротексту міняє той самий біт даних.");
+    Bytes plain = p.serialize();
+    plain[kIdx] ^= kMask;
+    TelemetryPacket forged = TelemetryPacket::deserialize(plain);
+    info("якби дані прийняли без перевірки, шлюз побачив би U=" + hl(fmtF(forged.voltageV) + " В") + " замість " +
+         hl(fmtF(p.voltageV) + " В"));
+
+    step(4, 6, "Підпис того самого конверта, перевірений проти зареєстрованого ключа пристрою:");
+    info("до підміни:    підпис " +
+         verdict(EccIdentity::verify(pair.pubKey, original.signedTranscript(), original.signature)));
+    info("після підміни: підпис " + verdict(EccIdentity::verify(pair.pubKey, msg.signedTranscript(), msg.signature)));
+
+    step(5, 6, "Підмінений пакет надсилається шлюзу під виглядом справжнього.");
     try {
         pair.gateway.unprotect(msg);
         outcome(false, "шлюз помилково прийняв підмінені дані");
     } catch (const SecurityException& e) {
-        step(4, 4, "Шлюз перевіряє ECDSA-підпис першим (він охоплює й шифротекст) - тож підпис уже не збігається.");
+        step(6, 6, "Шлюз перевіряє ECDSA-підпис першим (він охоплює й шифротекст) - тож підпис уже не збігається.");
         info("до перевірки AES-GCM тегу справа навіть не доходить - зайва робота над завідомо підробленими даними не витрачається");
         outcome(true, std::string("відхилено: ") + e.what());
     }
@@ -199,6 +238,8 @@ void scenarioExactReplayRejected() {
 
     step(2, 4, "Зловмисник не зміг би підробити новий пакет (немає приватного ключа), тож просто ЗАПИСАВ старий байт-у-байт.");
     step(3, 4, "І надсилає той самий, повністю справжній (валідний підпис і тег) пакет ще раз, без жодних змін.");
+    info("підпис повтору, перевірений проти ключа пристрою: " +
+         verdict(EccIdentity::verify(pair.pubKey, msg.signedTranscript(), msg.signature)) + " (пакет справжній)");
     try {
         pair.gateway.unprotect(msg);
         outcome(false, "шлюз помилково прийняв повтор");
@@ -220,6 +261,8 @@ void scenarioOlderSequenceRejected() {
     step(1, 3, "Шлюз уже прийняв пакети #1..#10 послідовно, внутрішній лічильник 'останній прийнятий' = " + hl("10") + ".");
     info("(msg3, збережений на кроці #3, мав seq=" + hl(std::to_string(msg3.sequenceNumber)) + ")");
     step(2, 3, "Зловмисник надсилає збережений раніше пакет #3 - не точний дублікат #10, а просто старіший номер.");
+    info("підпис пакета #3 і досі " + verdict(EccIdentity::verify(pair.pubKey, msg3.signedTranscript(), msg3.signature)) +
+         ", але його номер " + hl("3") + " менший за " + hl("10"));
     try {
         pair.gateway.unprotect(msg3);
         outcome(false, "шлюз помилково прийняв застарілий пакет");
@@ -280,6 +323,10 @@ void scenarioForgedSignatureRejected() {
     step(4, 6, "Зловмисник підписує той самий пакет СВОЇМ приватним ключем замість справжнього.");
     msg.signature = attacker.sign(msg.signedTranscript());
     info("підроблений підпис (чужим ключем): " + hl(shortHex(msg.signature)) + "  <- порівняйте зі справжнім підписом на кроці 2");
+    info("перевірка проти ключа ЗЛОВМИСНИКА:            підпис " +
+         verdict(EccIdentity::verify(attackerKey, msg.signedTranscript(), msg.signature)));
+    info("перевірка проти ЗАРЕЄСТРОВАНОГО ключа пристрою: підпис " +
+         verdict(EccIdentity::verify(victimKey, msg.signedTranscript(), msg.signature)));
 
     step(5, 6, "Підроблений пакет надсилається під виглядом 'victim-device' (deviceId у полі не змінено).");
     try {
