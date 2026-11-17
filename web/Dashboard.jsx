@@ -12,8 +12,8 @@ function useSharedChart(canvasRef, telemetry) {
                     {
                         label: "Потужність (Вт)",
                         data: [],
-                        borderColor: "#4fd1c5",
-                        backgroundColor: "rgba(79,209,197,0.1)",
+                        borderColor: "#0d9488",
+                        backgroundColor: "rgba(13,148,136,0.1)",
                         tension: 0.25,
                         fill: true,
                         pointRadius: 0,
@@ -25,10 +25,10 @@ function useSharedChart(canvasRef, telemetry) {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { ticks: { color: "#8b98a5" }, grid: { color: "#22303c" } },
-                    y: { ticks: { color: "#8b98a5" }, grid: { color: "#22303c" } },
+                    x: { ticks: { color: "#6b7280" }, grid: { color: "#e5e7eb" } },
+                    y: { ticks: { color: "#6b7280" }, grid: { color: "#e5e7eb" } },
                 },
-                plugins: { legend: { labels: { color: "#e6edf3" } } },
+                plugins: { legend: { labels: { color: "#1f2937" } } },
             },
         });
         return () => chartRef.current.destroy();
