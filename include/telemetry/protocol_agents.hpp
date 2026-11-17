@@ -13,6 +13,8 @@ public:
     void completeHandshake(const HelloMessage& gatewayHello);
 
     TelemetryEnvelope protect(const TelemetryPacket& packet);
+    TelemetryEnvelope protect(const Reading& reading);
+    TelemetryEnvelope protectBytes(const Bytes& plaintext);
 
 private:
     std::string deviceId_;
@@ -31,6 +33,8 @@ public:
 
     HelloMessage acceptHello(const HelloMessage& deviceHello);
     TelemetryPacket unprotect(const TelemetryEnvelope& msg);
+    Reading unprotectReading(const TelemetryEnvelope& msg);
+    Bytes unprotectBytes(const TelemetryEnvelope& msg);
 
 private:
     struct SessionState {

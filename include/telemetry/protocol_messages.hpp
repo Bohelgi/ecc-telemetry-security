@@ -3,6 +3,7 @@
 #include "telemetry/support.hpp"
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace telemetry {
 struct TelemetryPacket {
@@ -14,6 +15,15 @@ struct TelemetryPacket {
 
     Bytes serialize() const;
     static TelemetryPacket deserialize(const Bytes& data);
+};
+
+struct Reading {
+    uint64_t unixTimestampMs = 0;
+    std::string profileId;
+    std::vector<float> values;
+
+    Bytes serialize() const;
+    static Reading deserialize(const Bytes& data);
 };
 
 struct HelloMessage {

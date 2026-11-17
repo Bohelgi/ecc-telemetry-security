@@ -1,7 +1,10 @@
 #include "dashboard_state.hpp"
+#include "telemetry/support.hpp"
 #include <algorithm>
 #include <chrono>
 #include <sstream>
+
+using telemetry::jsonEscape;
 
 namespace {
 uint64_t nowMs() {
@@ -10,19 +13,39 @@ uint64_t nowMs() {
             .count());
 }
 
-std::string jsonEscape(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            default: out += c;
-        }
+float valueOf(const TelemetryPoint& point, const std::string& name) {
+    for (const auto& kv : point.values) {
+        if (kv.first == name) return kv.second;
     }
-    return out;
+    return 0.0f;
 }
+}
+
+DeviceInfo* DashboardState::findDevice(const std::string& deviceId) {
+    for (DeviceInfo& d : devices_) {
+        if (d.id == deviceId) return &d;
+    }
+    return nullptr;
+}
+
+void DashboardState::registerDevice(const std::string& deviceId, const std::string& profileId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (DeviceInfo* existing = findDevice(deviceId)) {
+        existing->profileId = profileId;
+        return;
+    }
+    DeviceInfo info;
+    info.id = deviceId;
+    info.profileId = profileId;
+    devices_.push_back(std::move(info));
+}
+
+std::string DashboardState::profileOf(const std::string& deviceId) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const DeviceInfo& d : devices_) {
+        if (d.id == deviceId) return d.profileId;
+    }
+    return std::string();
 }
 
 void DashboardState::recordHandshake(const std::string& deviceId) {
@@ -30,6 +53,7 @@ void DashboardState::recordHandshake(const std::string& deviceId) {
     if (std::find(connectedDevices_.begin(), connectedDevices_.end(), deviceId) == connectedDevices_.end()) {
         connectedDevices_.push_back(deviceId);
     }
+    if (DeviceInfo* d = findDevice(deviceId)) d->lastSeenMs = nowMs();
 }
 
 void DashboardState::recordConnectionClosed(const std::string& deviceId) {
@@ -41,19 +65,27 @@ void DashboardState::recordConnectionClosed(const std::string& deviceId) {
 void DashboardState::recordAccepted(const TelemetryPoint& point) {
     std::lock_guard<std::mutex> lock(mutex_);
     telemetry_.push_back(point);
-    if (telemetry_.size() > kMaxHistory) telemetry_.pop_front();
+    if (telemetry_.size() > kMaxTelemetry) telemetry_.pop_front();
 
     events_.push_back(ProtocolEvent{point.timestampMs, point.deviceId, point.sequenceNumber, true, ""});
-    if (events_.size() > kMaxHistory) events_.pop_front();
+    if (events_.size() > kMaxEvents) events_.pop_front();
 
+    if (DeviceInfo* d = findDevice(point.deviceId)) {
+        ++d->accepted;
+        d->lastSeenMs = nowMs();
+    }
     ++totalAccepted_;
 }
 
 void DashboardState::recordRejected(const std::string& deviceId, uint32_t sequenceNumber, const std::string& reason) {
     std::lock_guard<std::mutex> lock(mutex_);
     events_.push_back(ProtocolEvent{nowMs(), deviceId, sequenceNumber, false, reason});
-    if (events_.size() > kMaxHistory) events_.pop_front();
+    if (events_.size() > kMaxEvents) events_.pop_front();
 
+    if (DeviceInfo* d = findDevice(deviceId)) {
+        ++d->rejected;
+        d->lastSeenMs = nowMs();
+    }
     ++totalRejected_;
 }
 
@@ -62,6 +94,11 @@ void DashboardState::reset() {
     telemetry_.clear();
     events_.clear();
     connectedDevices_.clear();
+    for (DeviceInfo& d : devices_) {
+        d.accepted = 0;
+        d.rejected = 0;
+        d.lastSeenMs = 0;
+    }
     totalAccepted_ = 0;
     totalRejected_ = 0;
 }
@@ -74,7 +111,8 @@ std::string DashboardState::statusJson() const {
         if (i) os << ",";
         os << "\"" << jsonEscape(connectedDevices_[i]) << "\"";
     }
-    os << "],\"totalAccepted\":" << totalAccepted_ << ",\"totalRejected\":" << totalRejected_ << "}";
+    os << "],\"registeredDevices\":" << devices_.size() << ",\"totalAccepted\":" << totalAccepted_
+       << ",\"totalRejected\":" << totalRejected_ << "}";
     return os.str();
 }
 
@@ -82,12 +120,50 @@ std::string DashboardState::telemetryJson() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ostringstream os;
     os << "[";
+    bool first = true;
+    for (const TelemetryPoint& p : telemetry_) {
+        if (p.profileId != "power-meter") continue;
+        if (!first) os << ",";
+        first = false;
+        os << "{\"t\":" << p.timestampMs << ",\"device\":\"" << jsonEscape(p.deviceId) << "\",\"seq\":"
+           << p.sequenceNumber << ",\"U\":" << valueOf(p, "voltage") << ",\"I\":" << valueOf(p, "current")
+           << ",\"P\":" << valueOf(p, "power") << ",\"T\":" << valueOf(p, "temperature") << "}";
+    }
+    os << "]";
+    return os.str();
+}
+
+std::string DashboardState::readingsJson() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::ostringstream os;
+    os << "[";
     for (size_t i = 0; i < telemetry_.size(); ++i) {
         const TelemetryPoint& p = telemetry_[i];
         if (i) os << ",";
-        os << "{\"t\":" << p.timestampMs << ",\"device\":\"" << jsonEscape(p.deviceId) << "\",\"seq\":"
-           << p.sequenceNumber << ",\"U\":" << p.voltageV << ",\"I\":" << p.currentA << ",\"P\":" << p.powerW
-           << ",\"T\":" << p.temperatureC << "}";
+        os << "{\"t\":" << p.timestampMs << ",\"device\":\"" << jsonEscape(p.deviceId) << "\",\"profile\":\""
+           << jsonEscape(p.profileId) << "\",\"seq\":" << p.sequenceNumber << ",\"values\":{";
+        for (size_t j = 0; j < p.values.size(); ++j) {
+            if (j) os << ",";
+            os << "\"" << jsonEscape(p.values[j].first) << "\":" << p.values[j].second;
+        }
+        os << "}}";
+    }
+    os << "]";
+    return os.str();
+}
+
+std::string DashboardState::devicesJson() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::ostringstream os;
+    os << "[";
+    for (size_t i = 0; i < devices_.size(); ++i) {
+        const DeviceInfo& d = devices_[i];
+        bool connected =
+            std::find(connectedDevices_.begin(), connectedDevices_.end(), d.id) != connectedDevices_.end();
+        if (i) os << ",";
+        os << "{\"id\":\"" << jsonEscape(d.id) << "\",\"profile\":\"" << jsonEscape(d.profileId)
+           << "\",\"connected\":" << (connected ? "true" : "false") << ",\"accepted\":" << d.accepted
+           << ",\"rejected\":" << d.rejected << ",\"lastSeen\":" << d.lastSeenMs << "}";
     }
     os << "]";
     return os.str();

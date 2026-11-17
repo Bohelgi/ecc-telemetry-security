@@ -1,16 +1,20 @@
 #include "telemetry/console_colors.hpp"
+#include "telemetry/profiles.hpp"
 #include "telemetry/protocol_agents.hpp"
 #include "telemetry/tcp_socket.hpp"
 #include <httplib.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace telemetry;
 
@@ -20,6 +24,9 @@ struct Args {
     std::string host = "127.0.0.1";
     uint16_t port = 9443;
     std::string transport = "tcp";
+    std::string profile = "power-meter";
+    std::string source = "sim";
+    std::filesystem::path profilesFile;
     int intervalMs = 2000;
     int count = 0;
     std::filesystem::path keyFile = "device_identity.hex";
@@ -39,6 +46,9 @@ Args parseArgs(int argc, char** argv) {
         else if (arg == "--host") a.host = next("--host");
         else if (arg == "--port") a.port = static_cast<uint16_t>(std::stoi(next("--port")));
         else if (arg == "--transport") a.transport = next("--transport");
+        else if (arg == "--profile") a.profile = next("--profile");
+        else if (arg == "--source") a.source = next("--source");
+        else if (arg == "--profiles") a.profilesFile = next("--profiles");
         else if (arg == "--interval") a.intervalMs = std::stoi(next("--interval"));
         else if (arg == "--count") a.count = std::stoi(next("--count"));
         else if (arg == "--key-file") a.keyFile = next("--key-file");
@@ -50,6 +60,9 @@ Args parseArgs(int argc, char** argv) {
         a.attack != "forge" && a.attack != "unknown") {
         throw std::runtime_error("unknown --attack '" + a.attack +
                                   "' (expected none|tamper|replay|both|forge|unknown)");
+    }
+    if (a.source != "sim" && a.source != "stdin") {
+        throw std::runtime_error("unknown --source '" + a.source + "' (expected 'sim' or 'stdin')");
     }
     return a;
 }
@@ -116,35 +129,153 @@ private:
     httplib::Client client_;
 };
 
-class SensorSimulator {
+class IReadingSource {
 public:
-    TelemetryPacket next() {
-        voltage_ += noise_(rng_) * 0.5f;
-        voltage_ = std::clamp(voltage_, 215.0f, 245.0f);
-        current_ += noise_(rng_) * 0.05f;
-        current_ = std::clamp(current_, 0.5f, 8.0f);
-        temperature_ += noise_(rng_) * 0.1f;
-        temperature_ = std::clamp(temperature_, 18.0f, 45.0f);
+    virtual ~IReadingSource() = default;
+    virtual bool poll(std::vector<float>& values) = 0;
+    virtual bool exhausted() const { return false; }
+};
 
-        TelemetryPacket p;
-        p.unixTimestampMs = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch())
-                .count());
-        p.voltageV = voltage_;
-        p.currentA = current_;
-        p.powerW = voltage_ * current_;
-        p.temperatureC = temperature_;
-        return p;
+class SimulatedSource : public IReadingSource {
+protected:
+    float walk(float value, float step, float lo, float hi) {
+        return std::clamp(value + noise_(rng_) * step, lo, hi);
     }
+
+    bool chance(float probability) { return uniform_(rng_) < probability; }
 
 private:
     std::mt19937 rng_{std::random_device{}()};
     std::normal_distribution<float> noise_{0.0f, 1.0f};
+    std::uniform_real_distribution<float> uniform_{0.0f, 1.0f};
+};
+
+class PowerMeterSource : public SimulatedSource {
+public:
+    bool poll(std::vector<float>& values) override {
+        voltage_ = walk(voltage_, 0.5f, 215.0f, 245.0f);
+        current_ = walk(current_, 0.05f, 0.5f, 8.0f);
+        temperature_ = walk(temperature_, 0.1f, 18.0f, 45.0f);
+        values = {voltage_, current_, voltage_ * current_, temperature_};
+        return true;
+    }
+
+private:
     float voltage_ = 230.0f;
     float current_ = 3.0f;
     float temperature_ = 28.0f;
 };
+
+class SmartPlugSource : public SimulatedSource {
+public:
+    explicit SmartPlugSource(int intervalMs) : intervalMs_(intervalMs) {}
+
+    bool poll(std::vector<float>& values) override {
+        if (chance(0.04f)) on_ = !on_;
+        power_ = walk(power_, 15.0f, 40.0f, 1800.0f);
+        float reported = on_ ? power_ : 0.0f;
+        energyKwh_ += static_cast<double>(reported) * intervalMs_ / 3.6e9;
+        values = {reported, static_cast<float>(energyKwh_), on_ ? 1.0f : 0.0f};
+        return true;
+    }
+
+private:
+    int intervalMs_;
+    bool on_ = true;
+    float power_ = 120.0f;
+    double energyKwh_ = 12.4;
+};
+
+class ClimateSource : public SimulatedSource {
+public:
+    bool poll(std::vector<float>& values) override {
+        temperature_ = walk(temperature_, 0.08f, 18.0f, 28.0f);
+        humidity_ = walk(humidity_, 0.4f, 30.0f, 70.0f);
+        values = {temperature_, humidity_};
+        return true;
+    }
+
+private:
+    float temperature_ = 22.5f;
+    float humidity_ = 45.0f;
+};
+
+class LampSource : public SimulatedSource {
+public:
+    bool poll(std::vector<float>& values) override {
+        if (chance(0.06f)) on_ = !on_;
+        if (on_ && chance(0.15f)) brightness_ = std::round(walk(brightness_, 12.0f, 10.0f, 100.0f));
+        float reported = on_ ? brightness_ : 0.0f;
+        values = {on_ ? 1.0f : 0.0f, reported, reported * 0.1f};
+        return true;
+    }
+
+private:
+    bool on_ = false;
+    float brightness_ = 60.0f;
+};
+
+class DoorSource : public SimulatedSource {
+public:
+    bool poll(std::vector<float>& values) override {
+        ++ticks_;
+        bool changed = chance(0.12f);
+        if (changed) open_ = !open_;
+        if (!changed && ticks_ % 15 != 0) return false;
+        values = {open_ ? 1.0f : 0.0f};
+        return true;
+    }
+
+private:
+    bool open_ = false;
+    int ticks_ = 0;
+};
+
+class StdinSource : public IReadingSource {
+public:
+    explicit StdinSource(size_t fieldCount) : fieldCount_(fieldCount) {}
+
+    bool poll(std::vector<float>& values) override {
+        std::string line;
+        if (!std::getline(std::cin, line)) {
+            done_ = true;
+            return false;
+        }
+        std::istringstream ls(line);
+        std::vector<float> parsed;
+        float v;
+        while (ls >> v) parsed.push_back(v);
+        if (parsed.size() != fieldCount_) {
+            std::cout << ansi::yellow << "[device] skipped input line: expected " << fieldCount_ << " values, got "
+                      << parsed.size() << ansi::reset << "\n";
+            return false;
+        }
+        values = std::move(parsed);
+        return true;
+    }
+
+    bool exhausted() const override { return done_; }
+
+private:
+    size_t fieldCount_;
+    bool done_ = false;
+};
+
+std::unique_ptr<IReadingSource> makeSource(const Args& args, const DeviceProfile& profile) {
+    if (args.source == "stdin") return std::make_unique<StdinSource>(profile.fields.size());
+    if (profile.id == "power-meter") return std::make_unique<PowerMeterSource>();
+    if (profile.id == "smart-plug") return std::make_unique<SmartPlugSource>(args.intervalMs);
+    if (profile.id == "climate-sensor") return std::make_unique<ClimateSource>();
+    if (profile.id == "smart-lamp") return std::make_unique<LampSource>();
+    if (profile.id == "door-sensor") return std::make_unique<DoorSource>();
+    throw std::runtime_error("no built-in simulator for profile '" + profile.id + "', use --source stdin");
+}
+
+uint64_t nowMs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count());
+}
 }
 
 int main(int argc, char** argv) {
@@ -152,6 +283,14 @@ int main(int argc, char** argv) {
     ansi::enable();
     try {
         Args args = parseArgs(argc, argv);
+
+        ProfileRegistry profiles = ProfileRegistry::withBuiltins();
+        if (!args.profilesFile.empty()) profiles.loadFile(args.profilesFile);
+        const DeviceProfile* profile = profiles.find(args.profile);
+        if (profile == nullptr) {
+            throw std::runtime_error("unknown --profile '" + args.profile + "'");
+        }
+
         bool attackUnknown = (args.attack == "unknown");
         EccIdentity identity = attackUnknown ? EccIdentity() : EccIdentity::loadOrCreate(args.keyFile);
         if (attackUnknown) {
@@ -160,14 +299,15 @@ int main(int argc, char** argv) {
 
         if (!args.exportIdentityTo.empty()) {
             std::ofstream out(args.exportIdentityTo, std::ios::app);
-            out << args.deviceId << ' ' << toHex(identity.publicKeyUncompressed()) << '\n';
-            std::cout << "Provisioned " << args.deviceId << ": " << toHex(identity.publicKeyUncompressed()) << "\n"
+            out << args.deviceId << ' ' << toHex(identity.publicKeyUncompressed()) << ' ' << profile->id << '\n';
+            std::cout << "Provisioned " << args.deviceId << " (" << profile->id
+                      << "): " << toHex(identity.publicKeyUncompressed()) << "\n"
                       << "Add this line to the gateway's trust store (--trust-store) and rerun the device without "
                          "--export-identity.\n";
             return 0;
         }
 
-        std::cout << "[device " << args.deviceId << "] long-term public key (ECDSA): "
+        std::cout << "[device " << args.deviceId << "] profile: " << profile->id << ", long-term public key (ECDSA): "
                   << toHex(identity.publicKeyUncompressed()) << "\n";
 
         DeviceAgent agent(args.deviceId, std::move(identity));
@@ -217,10 +357,24 @@ int main(int argc, char** argv) {
         bool doForge = (args.attack == "forge");
         EccIdentity attackerIdentity;
 
-        SensorSimulator sensor;
-        for (int i = 0; args.count == 0 || i < args.count; ++i) {
-            TelemetryPacket packet = sensor.next();
-            TelemetryEnvelope msg = agent.protect(packet);
+        std::unique_ptr<IReadingSource> source = makeSource(args, *profile);
+        bool paced = (args.source == "sim");
+
+        int sent = 0;
+        while (args.count == 0 || sent < args.count) {
+            std::vector<float> values;
+            if (!source->poll(values)) {
+                if (source->exhausted()) break;
+                if (paced) std::this_thread::sleep_for(std::chrono::milliseconds(args.intervalMs));
+                continue;
+            }
+
+            Reading reading;
+            reading.unixTimestampMs = nowMs();
+            reading.profileId = profile->id;
+            reading.values = std::move(values);
+            TelemetryEnvelope msg = agent.protect(reading);
+            ++sent;
 
             if (doTamper && msg.sequenceNumber % 3 == 0) {
                 msg.ciphertext[0] ^= 0xFF;
@@ -230,7 +384,7 @@ int main(int argc, char** argv) {
             if (doForge && msg.sequenceNumber % 3 == 0) {
                 msg.signature = attackerIdentity.sign(msg.signedTranscript());
                 std::cout << ansi::yellow << "[device] (demo) forging signature of #" << msg.sequenceNumber
-                          << " with a foreign key" << ansi::reset << "\n";
+                           << " with a foreign key" << ansi::reset << "\n";
             }
             if (doReplay && msg.sequenceNumber == 4) {
                 std::cout << ansi::yellow << "[device] (demo) replaying #" << msg.sequenceNumber << " a second time"
@@ -238,16 +392,15 @@ int main(int argc, char** argv) {
                 transport->sendTelemetry(msg);
             }
 
-            std::cout << "[device] telemetry #" << msg.sequenceNumber << ": U=" << packet.voltageV
-                      << "V I=" << packet.currentA << "A P=" << packet.powerW << "W T=" << packet.temperatureC
-                      << "C\n"
+            std::cout << "[device] telemetry #" << msg.sequenceNumber << ": "
+                      << describeValues(*profile, reading.values) << "\n"
                       << "         nonce=" << toHex(msg.nonce) << " tag=" << toHex(msg.tag) << "\n"
                       << "         ciphertext=" << toHex(msg.ciphertext) << "\n"
                       << "         ECDSA signature (" << msg.signature.size() << " bytes)=" << toHex(msg.signature)
                       << "\n";
 
             transport->sendTelemetry(msg);
-            std::this_thread::sleep_for(std::chrono::milliseconds(args.intervalMs));
+            if (paced) std::this_thread::sleep_for(std::chrono::milliseconds(args.intervalMs));
         }
         return 0;
     } catch (const std::exception& e) {

@@ -20,6 +20,14 @@ void DeviceAgent::completeHandshake(const HelloMessage& gatewayHello) {
 }
 
 TelemetryEnvelope DeviceAgent::protect(const TelemetryPacket& packet) {
+    return protectBytes(packet.serialize());
+}
+
+TelemetryEnvelope DeviceAgent::protect(const Reading& reading) {
+    return protectBytes(reading.serialize());
+}
+
+TelemetryEnvelope DeviceAgent::protectBytes(const Bytes& plaintext) {
     if (!handshakeComplete_) {
         throw std::logic_error("DeviceAgent::protect: handshake not completed yet");
     }
@@ -29,7 +37,7 @@ TelemetryEnvelope DeviceAgent::protect(const TelemetryPacket& packet) {
     msg.sequenceNumber = ++sequenceCounter_;
 
     EncryptedBlob blob =
-        AesGcmCipher::encrypt(sessionKey_, packet.serialize(), makeTelemetryAad(msg.deviceId, msg.sequenceNumber));
+        AesGcmCipher::encrypt(sessionKey_, plaintext, makeTelemetryAad(msg.deviceId, msg.sequenceNumber));
     msg.nonce = std::move(blob.nonce);
     msg.ciphertext = std::move(blob.ciphertext);
     msg.tag = std::move(blob.tag);
@@ -65,6 +73,14 @@ HelloMessage GatewayAgent::acceptHello(const HelloMessage& deviceHello) {
 }
 
 TelemetryPacket GatewayAgent::unprotect(const TelemetryEnvelope& msg) {
+    return TelemetryPacket::deserialize(unprotectBytes(msg));
+}
+
+Reading GatewayAgent::unprotectReading(const TelemetryEnvelope& msg) {
+    return Reading::deserialize(unprotectBytes(msg));
+}
+
+Bytes GatewayAgent::unprotectBytes(const TelemetryEnvelope& msg) {
     auto deviceIt = trustedDevices_.find(msg.deviceId);
     if (deviceIt == trustedDevices_.end()) {
         throw SecurityException("GatewayAgent: message from unregistered device '" + msg.deviceId + "'");
@@ -92,6 +108,6 @@ TelemetryPacket GatewayAgent::unprotect(const TelemetryEnvelope& msg) {
         AesGcmCipher::decrypt(sessionIt->second.key, blob, makeTelemetryAad(msg.deviceId, msg.sequenceNumber));
 
     sessionIt->second.lastSequence = msg.sequenceNumber;
-    return TelemetryPacket::deserialize(plaintext);
+    return plaintext;
 }
 }

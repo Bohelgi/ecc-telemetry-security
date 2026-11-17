@@ -39,12 +39,8 @@ std::string shortHex(const Bytes& b, size_t n = 10) {
     return full.substr(0, n * 2) + "...";
 }
 
-// Виділяє кольором конкретне значення, на яке варто звернути увагу (число,
-// що порівнюється між кроками) - решта рядка лишається звичайного кольору.
 std::string hl(const std::string& s) { return std::string(ansi::cyan) + ansi::bold + s + ansi::reset; }
 
-// std::to_string(float) прописує повну (нечитабельну) точність, наприклад "231.399994"
-// замість "231.4" - цей форматер друкує числа так само чисто, як звичайний std::cout.
 std::string fmtF(float v) {
     std::ostringstream os;
     os << v;

@@ -28,6 +28,7 @@ add_library(telemetry_core STATIC
     src/crypto_primitives.cpp
     src/protocol_messages.cpp
     src/protocol_agents.cpp
+    src/profiles.cpp
     src/tcp_socket.cpp
 )
 target_include_directories(telemetry_core PUBLIC include)

@@ -4,6 +4,8 @@ out/
 *.log
 device_identity.hex
 trust_store.txt
+trust_store_fleet.txt
+fleet_keys/
 
 # Тимчасові lock-файли Microsoft Office (з'являються при відкритому .docx)
 ~$*.docx

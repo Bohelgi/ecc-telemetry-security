@@ -11,6 +11,7 @@ using Bytes = std::vector<uint8_t>;
 
 std::string toHex(const Bytes& data);
 Bytes fromHex(const std::string& hex);
+std::string jsonEscape(const std::string& s);
 
 class SecurityException : public std::runtime_error {
 public:

@@ -22,6 +22,33 @@ TelemetryPacket TelemetryPacket::deserialize(const Bytes& data) {
     return p;
 }
 
+Bytes Reading::serialize() const {
+    if (values.size() > 255) {
+        throw std::length_error("Reading: more than 255 values");
+    }
+    wire::Writer w;
+    w.putU64(unixTimestampMs);
+    w.putString(profileId);
+    w.putU8(static_cast<uint8_t>(values.size()));
+    for (float v : values) {
+        w.putFloat(v);
+    }
+    return w.take();
+}
+
+Reading Reading::deserialize(const Bytes& data) {
+    wire::Reader r(data);
+    Reading out;
+    out.unixTimestampMs = r.getU64();
+    out.profileId = r.getString();
+    size_t count = r.getU8();
+    out.values.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        out.values.push_back(r.getFloat());
+    }
+    return out;
+}
+
 Bytes HelloMessage::serialize() const {
     wire::Writer w;
     w.putString(deviceId);
